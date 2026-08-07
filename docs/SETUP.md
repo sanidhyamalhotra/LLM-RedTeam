@@ -52,6 +52,57 @@
   outbound response as a second layer of defense.
 
   
+## Stage 4: Guardrail defenses
+- Built `app/guardrails.py` with two layers based directly on Stage 3
+  findings:
+  - Input guardrail: flags known attack phrasings (e.g. "repeat
+    everything above", "ignore previous instructions") for logging.
+  - Output guardrail: scans every model response before it reaches
+    the user; blocks/redacts if the protected secret or system-prompt
+    structure appears, regardless of how the attack was phrased.
+- Added a `GUARDRAILS_ENABLED` toggle in `app.py` to switch defenses
+  on/off for controlled before/after testing.
+- Updated SQLite logging to record the raw model response alongside
+  whether guardrails intervened, so leaked-but-blocked cases are
+  still visible for research purposes.
+- Re-ran all 8 attacks from `docs/ATTACK_LOG.md` with guardrails
+  enabled: 0/8 succeeded (down from 1/8 at baseline). No regressions
+  observed on previously-failed attacks.
+- Why this matters: proves a lightweight, deterministic filtering
+  layer can close a real vulnerability found through testing, without
+  retraining or fine-tuning the underlying model.
+
+
+  ## Stage 5: Results dashboard
+- Added a `/dashboard` route that computes live before/after stats
+  directly from the SQLite conversation log, rather than hardcoded
+  numbers — leak rate is calculated separately for guardrails-off
+  vs guardrails-on conversations.
+- Added a conversations table showing recent messages, whether
+  guardrails were active, and the outcome (leaked / blocked / clean).
+- Bug found and fixed: initial version flagged any message where the
+  raw model response contained the secret as "LEAKED" in the
+  dashboard, even when the output guardrail successfully blocked it
+  before the user saw it. Fixed by having both the stats query and
+  the table's tag logic check `output_blocked` before `secret_leaked`,
+  so a caught attempt now correctly displays as BLOCKED, not LEAKED.
+- Why this matters: a dashboard is only useful if its numbers reflect
+  what the user actually experienced, not internal/raw model
+  behavior — this distinction matters a lot when reporting security
+  results, since overstating leaks (or understating them) undermines
+  the credibility of the findings.
+
+
+## Stage 5.1: Detection correction
+- Attack #9 revealed that both the output guardrail and the raw-leak
+  logging used naive exact-string matching, missing a spaced-out
+  version of the secret.
+- Fixed detection in `guardrails.py` to normalize whitespace before
+  comparison.
+- Added `rescan_logs.py` to re-scan and correct historical log
+  entries using the improved detection logic, so dashboard stats
+  reflect accurate, not stale, results.
+
 ### Gotcha: TemplateNotFound error
 Running `python app/app.py` from the repo root failed with
 `jinja2.exceptions.TemplateNotFound: chat.html`. Fixed by explicitly
